@@ -1,0 +1,11 @@
+[Unit]
+Description=SMS Greeter - Twilio Webhook
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/sms-greeter
+ExecStart=/home/ubuntu/sms-greeter/bin/gunicorn -b localhost:5000 app:webhook_app
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
