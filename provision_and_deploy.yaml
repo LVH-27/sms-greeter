@@ -1,0 +1,172 @@
+---
+- hosts: localhost
+  gather_facts: false
+  name: provision an EC2 instance
+  tags:
+    - provisioning
+  vars:
+    aws_access_key: "AKIAI4JLE5S3C5NCKHMA"
+    aws_secret_key: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          30343935306537393137643734303664396465636139336131316665613931386137343661636330
+          3866333131613166646363373364333761616135393161660a326133386134336666633333333465
+          33373339613836646162366535386262376337383366363331366131646366386230633533396539
+          3333363364646630610a386563646664356466336531326262643534323561643861646335333535
+          37663739333634346437663435666639356130633262343035633266353165663931306236313438
+          3935316235353463653863616232653466363035313163393332
+    aws_region: "eu-central-1"
+    key_name: "sms-greeter"
+    key_path: /home/rincewind/projects/ec2-twilio/ec2-twilio.pem
+    twilio_account_sid: "AC855ce047ee44a6593442cc20ee9451cd"
+    twilio_auth_token: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          30373865386331393362663937373965336236623165613633313564343331303866623362643437
+          3437653434646139346563613266623966333164323964380a376137323032663936303866386465
+          30643832656265303130623136343034313037363261663462343362643930323562643735616263
+          3335373532396134350a616534613237323639336438383234346562316661313865376234363161
+          39613235633839363862326336356434663764373564613832653332653462356466626463636534
+          3833626238383066393332646565306135386530663330613032
+    twilio_phone_number_id: "PN08acd35b2308cbd5fd5da2f1e89f66c9"
+
+  tasks:
+    - name: ensure boto and boto3 are installed (needed for the ec2 module)
+      pip:
+        name: [boto, boto3]
+
+    - name: define EC2 security group
+      ec2_group:
+        aws_access_key: "{{aws_access_key}}"
+        aws_secret_key: "{{aws_secret_key}}"
+        name: twilio
+        description: a group for Twilio webhook - SSH and HTTP access
+        region: "{{ aws_region }}"
+        rules:
+          - proto: tcp
+            ports:
+              - 22
+              - 80
+              - 443
+            cidr_ip: 0.0.0.0/0
+
+    - name: create an EC2 key
+      ec2_key:
+        aws_access_key: "{{aws_access_key}}"
+        aws_secret_key: "{{aws_secret_key}}"
+        name: "{{ key_name }}"
+        region: "{{ aws_region }}"
+      register: ec2_key
+
+    - name: save private key
+      copy:
+        content: "{{ ec2_key.key.private_key }}"
+        dest: "{{ key_path }}"
+        mode: 0600
+      when: ec2_key.changed
+
+    - name: create EC2 instance
+      # Basic provisioning example
+      ec2:
+        aws_access_key: "{{aws_access_key}}"
+        aws_secret_key: "{{aws_secret_key}}"
+        key_name: "{{ key_name }}"
+        instance_type: t2.micro
+        image: ami-0d359437d1756caa8
+        region: "{{ aws_region }}"
+        wait: true
+        exact_count: 1
+        count_tag:
+          Name: twilio-webhook
+        instance_tags:
+          Name: twilio-webhook
+        group: twilio
+      register: ec2
+
+    - name: add all instance public IPs to host group
+      add_host:
+        hostname: "{{ item.public_dns_name }}"
+        groupname: ec2hosts
+      loop: "{{ ec2.tagged_instances }}"
+
+    - name: set Twilio webhook URL
+      uri:
+        url: "https://api.twilio.com/2010-04-01/Accounts/{{ twilio_account_sid }}/IncomingPhoneNumbers/{{ twilio_phone_number_id }}.json"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          - [SmsUrl, "http://{{ ec2.tagged_instances[0].public_dns_name }}/sms/receive_sms/"]
+        user: "{{ twilio_account_sid }}"
+        password: "{{ twilio_auth_token }}"
+
+
+- name: deploy the webhook to the EC2 instance
+  hosts: ec2hosts
+  gather_facts: false
+  vars:
+    ansible_ssh_private_key_file: /home/rincewind/projects/ec2-twilio/ec2-twilio.pem
+  tags:
+    - deploying
+
+  tasks:
+    - name: wait for SSH to come up
+      wait_for_connection:
+        sleep: 30
+        timeout: 300
+
+    - name: ensure git, nginx, python3 and pip are installed
+      apt:
+        name: [git, nginx, python3-dev, python3-pip]
+        state: present
+        update-cache: true  # equivalent of apt-get update
+      become: true
+
+    - name: ensure virtualenv is installed
+      pip:
+        name: virtualenv
+      become: true
+
+    - name: pull any changes to sms-greeter from git
+      git:
+        repo: https://github.com/LVH-27/sms-greeter
+        dest: /opt/sms-greeter
+        version: master
+      become: true
+
+    - name: install requirements for app
+      pip:
+        requirements: /opt/sms-greeter/requirements.txt
+        virtualenv: ~/sms-greeter
+        virtualenv_python: python3
+
+    - name: ensure the SMS greeter service is added to systemd
+      copy:
+        remote_src: true
+        src: cp /opt/sms-greeter/sms-greeter.service
+        dest: /lib/systemd/system/
+      become: true
+
+    - name: start sms-greeter systemd service
+      systemd:
+        service: sms-greeter.service
+        enabled: true
+        state: started
+        scope: system
+        daemon_reload: true
+      become: true
+
+    - name: ensure the SMS greeter config is added to nginx
+      copy:
+        remote_src: true  # source path is on the managed node, not on the controller
+        src: /opt/sms-greeter/sms-greeter.conf
+        dest: /etc/nginx/sites-enabled/sms-greeter.conf
+      become: true
+
+    - name: delete the default nginx config file
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      become: true
+
+    - name: reload nginx config
+      shell:
+        cmd: nginx -s reload
+      become: true

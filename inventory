@@ -1,0 +1,15 @@
+---
+all:
+  hosts:
+    localhost:
+      vars:
+        ansible_python_interpreter: /usr/bin/python3.8
+  children:
+    ec2hosts:
+      vars:
+        ansible_user: ubuntu
+        ansible_python_interpreter: /usr/bin/python3
+        # the instances are dynamically provisioned, so
+        # host key checking provides no security value
+        # unless the instance ends up being long-lived
+        ansible_ssh_extra_args: '-o StrictHostKeyChecking=no'
