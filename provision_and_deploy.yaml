@@ -140,7 +140,7 @@
     - name: ensure the SMS greeter service is added to systemd
       copy:
         remote_src: true
-        src: cp /opt/sms-greeter/sms-greeter.service
+        src: /opt/sms-greeter/sms-greeter.service
         dest: /lib/systemd/system/
       become: true
 
