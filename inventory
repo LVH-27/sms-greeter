@@ -1,5 +1,8 @@
 ---
 all:
+  vars:
+    ec2_key_name: ec2-twilio
+    ec2_key_path: /home/rincewind/projects/ec2-twilio/ec2-twilio.pem
   hosts:
     localhost:
       vars:
@@ -13,3 +16,5 @@ all:
         # host key checking provides no security value
         # unless the instance ends up being long-lived
         ansible_ssh_extra_args: '-o StrictHostKeyChecking=no'
+        ansible_ssh_private_key_file: "{{ ec2_key_path }}"
+

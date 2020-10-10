@@ -2,6 +2,7 @@
 - hosts: localhost
   gather_facts: false
   name: provision an EC2 instance
+  connection: local
   tags:
     - provisioning
   vars:
@@ -15,8 +16,8 @@
           37663739333634346437663435666639356130633262343035633266353165663931306236313438
           3935316235353463653863616232653466363035313163393332
     aws_region: "eu-central-1"
-    key_name: "sms-greeter"
-    key_path: /home/rincewind/projects/ec2-twilio/ec2-twilio.pem
+    # key_name: "{{ ec2_key_name }}"
+    # key_path: "{{ ec2_key_path }}"
     twilio_account_sid: "AC855ce047ee44a6593442cc20ee9451cd"
     twilio_auth_token: !vault |
           $ANSIBLE_VAULT;1.1;AES256
@@ -52,14 +53,14 @@
       ec2_key:
         aws_access_key: "{{aws_access_key}}"
         aws_secret_key: "{{aws_secret_key}}"
-        name: "{{ key_name }}"
+        name: "{{ ec2_key_name }}"
         region: "{{ aws_region }}"
       register: ec2_key
 
     - name: save private key
       copy:
         content: "{{ ec2_key.key.private_key }}"
-        dest: "{{ key_path }}"
+        dest: "{{ ec2_key_path }}"
         mode: 0600
       when: ec2_key.changed
 
@@ -68,7 +69,7 @@
       ec2:
         aws_access_key: "{{aws_access_key}}"
         aws_secret_key: "{{aws_secret_key}}"
-        key_name: "{{ key_name }}"
+        key_name: "{{ ec2_key_name }}"
         instance_type: t2.micro
         image: ami-0d359437d1756caa8
         region: "{{ aws_region }}"
@@ -102,7 +103,7 @@
   hosts: ec2hosts
   gather_facts: false
   vars:
-    ansible_ssh_private_key_file: /home/rincewind/projects/ec2-twilio/ec2-twilio.pem
+    sms_greeter_app_repo: https://github.com/LVH-27/sms-greeter
   tags:
     - deploying
 
@@ -126,7 +127,7 @@
 
     - name: pull any changes to sms-greeter from git
       git:
-        repo: https://github.com/LVH-27/sms-greeter
+        repo: "{{ sms_greeter_app_repo }}" 
         dest: /opt/sms-greeter
         version: master
       become: true
